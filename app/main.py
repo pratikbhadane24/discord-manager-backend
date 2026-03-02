@@ -5,8 +5,9 @@ from contextlib import asynccontextmanager
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
-from app.api.endpoints import example, health
+from app.api.endpoints import admin, auth, example, health, users, webhooks
 from app.core.config import get_settings
+from app.core.scheduler import start_scheduler, stop_scheduler
 from app.database.database import close_database, init_database
 
 settings = get_settings()
@@ -17,12 +18,15 @@ async def lifespan(app: FastAPI):
     """
     Application lifespan context manager.
 
-    Handles startup and shutdown events.
+    Handles startup and shutdown events including database initialisation
+    and APScheduler lifecycle management.
     """
     # Startup
     await init_database()
+    start_scheduler()
     yield
     # Shutdown
+    stop_scheduler()
     await close_database()
 
 
@@ -30,7 +34,10 @@ async def lifespan(app: FastAPI):
 app = FastAPI(
     title=settings.APP_NAME,
     version=settings.APP_VERSION,
-    description="FastAPI microservice template with UV and Granian",
+    description=(
+        "REST API for a Paid Discord Community Management Platform. "
+        "Manages subscriptions, Discord role assignment, and payment webhooks."
+    ),
     lifespan=lifespan,
 )
 
@@ -46,6 +53,10 @@ app.add_middleware(
 # Include routers
 app.include_router(health.router, prefix=settings.API_PREFIX)
 app.include_router(example.router, prefix=settings.API_PREFIX)
+app.include_router(auth.router, prefix=settings.API_PREFIX)
+app.include_router(users.router, prefix=settings.API_PREFIX)
+app.include_router(admin.router, prefix=settings.API_PREFIX)
+app.include_router(webhooks.router, prefix=settings.API_PREFIX)
 
 
 @app.get("/")

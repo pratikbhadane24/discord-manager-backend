@@ -15,12 +15,13 @@ class Settings(BaseSettings):
     )
 
     # Application Settings
-    APP_NAME: str = "T-Backend-Python"
+    APP_NAME: str = "Discord Manager Backend"
     APP_VERSION: str = "1.0.0"
-    API_PREFIX: str = "/api"
+    API_PREFIX: str = "/api/v1"
 
     # Database Configuration
-    DATABASE_URL: str | None = None
+    DATABASE_URL: str = "mongodb://localhost:27017"
+    DATABASE_NAME: str = "discord_manager"
 
     # JWT Configuration
     JWT_SECRET_KEY: str
@@ -30,6 +31,16 @@ class Settings(BaseSettings):
     # Server Configuration
     HOST: str = "0.0.0.0"
     PORT: int = 8000
+
+    # Discord OAuth2 Configuration
+    DISCORD_CLIENT_ID: str = ""
+    DISCORD_CLIENT_SECRET: str = ""
+    DISCORD_BOT_TOKEN: str = ""
+    DISCORD_REDIRECT_URI: str = "http://localhost:8000/api/v1/auth/discord/callback"
+    DISCORD_API_BASE_URL: str = "https://discord.com/api/v10"
+
+    # Webhook Security
+    WEBHOOK_SECRET: str = ""
 
 
 @lru_cache

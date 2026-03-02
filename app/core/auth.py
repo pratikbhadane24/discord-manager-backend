@@ -50,3 +50,25 @@ async def get_current_user(request: Request) -> dict:
         )
 
     return payload
+
+
+async def get_current_admin(request: Request) -> dict:
+    """
+    Extract and validate JWT token, enforcing admin role.
+
+    Args:
+        request: FastAPI Request object
+
+    Returns:
+        Decoded user information from token (admin only)
+
+    Raises:
+        HTTPException: If token is missing, invalid, or user is not admin
+    """
+    payload = await get_current_user(request)
+    if not payload.get("is_admin", False):
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Admin privileges required",
+        )
+    return payload

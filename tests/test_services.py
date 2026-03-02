@@ -3,7 +3,17 @@
 import pytest
 
 from app.models.example import ExampleItemCreate, ExampleItemUpdate
-from app.services.example_service import ExampleService
+from app.services.example_service import ExampleService, _shared_items, _shared_next_id
+
+
+@pytest.fixture(autouse=True)
+def clear_shared_store():
+    """Reset the shared in-memory store before each test."""
+    _shared_items.clear()
+    _shared_next_id[0] = 1
+    yield
+    _shared_items.clear()
+    _shared_next_id[0] = 1
 
 
 @pytest.mark.asyncio
@@ -34,18 +44,13 @@ async def test_get_item():
 async def test_list_items():
     """Test listing items from the service."""
     service = ExampleService()
-    # Get initial count
-    initial_items = await service.list_items(skip=0, limit=100)
-    initial_count = len(initial_items)
-    
     # Create multiple items
     for i in range(5):
         item_data = ExampleItemCreate(name=f"Test Item {i}")
         await service.create_item(item_data)
 
     items = await service.list_items(skip=0, limit=100)
-    # Should have at least 5 more items than before
-    assert len(items) >= initial_count + 5
+    assert len(items) == 5
 
 
 @pytest.mark.asyncio
