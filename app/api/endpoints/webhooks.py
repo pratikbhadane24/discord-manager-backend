@@ -9,11 +9,13 @@ POST /external-payment — receive and process payment provider webhooks
 import hashlib
 import hmac
 import logging
+from datetime import datetime, timezone
 
 from fastapi import APIRouter, Header, HTTPException, Request, status
 
 from app.core.config import get_settings
 from app.database.models import (
+    DiscordServer,
     PaymentWebhookPayload,
     Subscription,
     SubscriptionStatus,
@@ -121,8 +123,6 @@ async def external_payment_webhook(
     if payload.current_period_end:
         subscription.current_period_end = payload.current_period_end
 
-    from datetime import datetime, timezone
-
     subscription.updated_at = datetime.now(timezone.utc)
     await subscription.save()
 
@@ -158,8 +158,6 @@ async def _sync_discord_roles(
     if not tier or not user or not user.discord_id:
         return
 
-    server = None
-    from app.database.models import DiscordServer
     server = await DiscordServer.get(tier.server_id)
     if not server:
         return

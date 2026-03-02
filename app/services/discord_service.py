@@ -142,7 +142,9 @@ class DiscordService:
                     exc.retry_after,
                 )
                 await asyncio.sleep(exc.retry_after)
-        raise last_exc  # type: ignore[misc]
+        if last_exc is None:
+            raise RuntimeError("Rate-limit retry loop exited without an exception")
+        raise last_exc
 
     # ── OAuth2 helpers ────────────────────────────────────────────────────────
 
