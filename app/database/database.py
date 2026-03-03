@@ -40,7 +40,7 @@ async def init_database(motor_client: AsyncIOMotorClient | None = None) -> None:
     if motor_client is not None:
         _motor_client = motor_client
     else:
-        _motor_client = AsyncIOMotorClient(settings.DATABASE_URL)
+        _motor_client = AsyncIOMotorClient(settings.DATABASE_URL)  # pragma: no cover
 
     await init_beanie(
         database=_motor_client[settings.DATABASE_NAME],

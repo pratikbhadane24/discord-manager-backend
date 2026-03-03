@@ -1,5 +1,11 @@
 """Pytest configuration and fixtures."""
 
+import os
+
+# Must be set before any app modules are imported so pydantic-settings can
+# validate the required JWT_SECRET_KEY field.
+os.environ.setdefault("JWT_SECRET_KEY", "test-secret-key-for-testing-only")
+
 import pytest
 import pytest_asyncio
 from httpx import ASGITransport, AsyncClient

@@ -142,3 +142,24 @@ async def test_get_nonexistent_example(async_client, auth_headers):
     """Test getting a non-existent item returns 404."""
     response = await async_client.get("/api/v1/examples/9999", headers=auth_headers)
     assert response.status_code == 404
+
+
+@pytest.mark.asyncio
+async def test_update_nonexistent_example(async_client, auth_headers):
+    """Test updating a non-existent item returns 404."""
+    response = await async_client.put(
+        "/api/v1/examples/9999",
+        json={"name": "Ghost"},
+        headers=auth_headers,
+    )
+    assert response.status_code == 404
+
+
+@pytest.mark.asyncio
+async def test_delete_nonexistent_example(async_client, auth_headers):
+    """Test deleting a non-existent item returns 404."""
+    response = await async_client.delete(
+        "/api/v1/examples/9999",
+        headers=auth_headers,
+    )
+    assert response.status_code == 404

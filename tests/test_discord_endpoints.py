@@ -652,3 +652,348 @@ async def test_webhook_cancels_subscription_and_kicks(async_client, mock_db):
         "/api/v1/webhooks/external-payment", json=payload
     )
     assert resp.status_code == 200
+
+
+# ── Auth: discord_callback user not in DB ────────────────────────────────────
+
+
+@pytest.mark.asyncio
+@respx.mock
+async def test_discord_callback_user_deleted(async_client, mock_db, auth_headers):
+    """discord_callback returns 404 when the JWT user no longer exists in the DB."""
+    # The JWT sub is "test_user" but we do NOT create the User document
+    respx.post("https://discord.com/api/oauth2/token").mock(
+        return_value=httpx.Response(
+            200,
+            json={"access_token": "acc", "refresh_token": "ref", "expires_in": 604800},
+        )
+    )
+    respx.get("https://discord.com/api/v10/users/@me").mock(
+        return_value=httpx.Response(200, json={"id": "discord_xyz"})
+    )
+
+    resp = await async_client.get(
+        "/api/v1/auth/discord/callback?code=code",
+        headers=auth_headers,
+    )
+    assert resp.status_code == 404
+
+
+# ── Webhooks: _sync_discord_roles edge cases ─────────────────────────────────
+
+
+@pytest.mark.asyncio
+async def test_webhook_sync_no_user(async_client, mock_db):
+    """Webhook gracefully handles a subscription with no matching user."""
+    from app.database.models import (
+        DiscordServer,
+        Subscription,
+        SubscriptionStatus,
+        SubscriptionTier,
+        User,
+    )
+
+    user = User(email="gone@example.com", hashed_password=hash_password("pw"), discord_id="d1")
+    await user.insert()
+    server = DiscordServer(guild_id="g_nouser", guild_name="G", owner_id=str(user.id))
+    await server.insert()
+    tier = SubscriptionTier(
+        server_id=str(server.id), tier_name="T", price_id="p", discord_role_ids=["r"]
+    )
+    await tier.insert()
+    sub = Subscription(
+        user_id="000000000000000000000099",  # valid ObjectId that doesn't exist
+        tier_id=str(tier.id),
+        external_subscription_id="sub_nouser",
+        status=SubscriptionStatus.PAST_DUE,
+        current_period_end=datetime.now(timezone.utc) + timedelta(days=30),
+    )
+    await sub.insert()
+
+    payload = {
+        "event_type": "subscription.updated",
+        "subscription_id": "sub_nouser",
+        "status": "active",
+    }
+    resp = await async_client.post("/api/v1/webhooks/external-payment", json=payload)
+    assert resp.status_code == 200
+
+
+@pytest.mark.asyncio
+async def test_webhook_sync_no_server(async_client, mock_db):
+    """Webhook gracefully handles a tier with no matching Discord server."""
+    from app.database.models import (
+        Subscription,
+        SubscriptionStatus,
+        SubscriptionTier,
+        User,
+    )
+
+    user = User(email="ns@example.com", hashed_password=hash_password("pw"), discord_id="d_ns")
+    await user.insert()
+    # Create tier referencing a server_id that doesn't exist in DB
+    tier = SubscriptionTier(
+        server_id="000000000000000000000001",
+        tier_name="T",
+        price_id="p",
+        discord_role_ids=["r"],
+    )
+    await tier.insert()
+    sub = Subscription(
+        user_id=str(user.id),
+        tier_id=str(tier.id),
+        external_subscription_id="sub_noserver",
+        status=SubscriptionStatus.PAST_DUE,
+        current_period_end=datetime.now(timezone.utc) + timedelta(days=30),
+    )
+    await sub.insert()
+
+    payload = {
+        "event_type": "subscription.updated",
+        "subscription_id": "sub_noserver",
+        "status": "active",
+    }
+    resp = await async_client.post("/api/v1/webhooks/external-payment", json=payload)
+    assert resp.status_code == 200
+
+
+@pytest.mark.asyncio
+@respx.mock
+async def test_webhook_role_add_failure_is_logged(async_client, mock_db):
+    """Exception in add_role_to_member during webhook sync is logged, not raised."""
+    user = User(
+        email="rolefail@example.com",
+        hashed_password=hash_password("pw"),
+        discord_id="d_rf",
+    )
+    await user.insert()
+    server = DiscordServer(
+        guild_id="g_rf", guild_name="G", owner_id=str(user.id)
+    )
+    await server.insert()
+    tier = SubscriptionTier(
+        server_id=str(server.id),
+        tier_name="T",
+        price_id="p",
+        discord_role_ids=["role_fail"],
+    )
+    await tier.insert()
+    sub = Subscription(
+        user_id=str(user.id),
+        tier_id=str(tier.id),
+        external_subscription_id="sub_rf",
+        status=SubscriptionStatus.PAST_DUE,
+        current_period_end=datetime.now(timezone.utc) + timedelta(days=30),
+    )
+    await sub.insert()
+
+    # Discord returns 403 — DiscordService will raise HTTPStatusError
+    respx.put(
+        "https://discord.com/api/v10/guilds/g_rf/members/d_rf/roles/role_fail"
+    ).mock(return_value=httpx.Response(403, json={"message": "Missing Permissions"}))
+
+    payload = {
+        "event_type": "subscription.updated",
+        "subscription_id": "sub_rf",
+        "status": "active",
+    }
+    resp = await async_client.post("/api/v1/webhooks/external-payment", json=payload)
+    assert resp.status_code == 200
+
+
+@pytest.mark.asyncio
+@respx.mock
+async def test_webhook_role_remove_failure_is_logged(async_client, mock_db):
+    """Exception in remove_role_from_member during webhook sync is logged, not raised."""
+    user = User(
+        email="removerf@example.com",
+        hashed_password=hash_password("pw"),
+        discord_id="d_rmrf",
+    )
+    await user.insert()
+    server = DiscordServer(guild_id="g_rmrf", guild_name="G", owner_id=str(user.id))
+    await server.insert()
+    tier = SubscriptionTier(
+        server_id=str(server.id),
+        tier_name="T",
+        price_id="p",
+        discord_role_ids=["role_rmfail"],
+    )
+    await tier.insert()
+    sub = Subscription(
+        user_id=str(user.id),
+        tier_id=str(tier.id),
+        external_subscription_id="sub_rmrf",
+        status=SubscriptionStatus.ACTIVE,
+        current_period_end=datetime.now(timezone.utc) + timedelta(days=30),
+    )
+    await sub.insert()
+
+    respx.delete(
+        "https://discord.com/api/v10/guilds/g_rmrf/members/d_rmrf/roles/role_rmfail"
+    ).mock(return_value=httpx.Response(403, json={"message": "Missing Permissions"}))
+    # Kick won't happen since another active sub exists in itself (after status update is
+    # applied the sub becomes canceled and there are no other active subs, but we also mock
+    # the kick to avoid hanging)
+    respx.delete(
+        "https://discord.com/api/v10/guilds/g_rmrf/members/d_rmrf"
+    ).mock(return_value=httpx.Response(204))
+
+    payload = {
+        "event_type": "subscription.updated",
+        "subscription_id": "sub_rmrf",
+        "status": "canceled",
+    }
+    resp = await async_client.post("/api/v1/webhooks/external-payment", json=payload)
+    assert resp.status_code == 200
+
+
+@pytest.mark.asyncio
+@respx.mock
+async def test_webhook_kick_failure_is_logged(async_client, mock_db):
+    """Exception in kick_member during webhook sync is logged, not raised."""
+    user = User(
+        email="kickfail@example.com",
+        hashed_password=hash_password("pw"),
+        discord_id="d_kf",
+    )
+    await user.insert()
+    server = DiscordServer(guild_id="g_kf", guild_name="G", owner_id=str(user.id))
+    await server.insert()
+    tier = SubscriptionTier(
+        server_id=str(server.id),
+        tier_name="T",
+        price_id="p",
+        discord_role_ids=["role_kf"],
+    )
+    await tier.insert()
+    sub = Subscription(
+        user_id=str(user.id),
+        tier_id=str(tier.id),
+        external_subscription_id="sub_kf",
+        status=SubscriptionStatus.ACTIVE,
+        current_period_end=datetime.now(timezone.utc) + timedelta(days=30),
+    )
+    await sub.insert()
+
+    respx.delete(
+        "https://discord.com/api/v10/guilds/g_kf/members/d_kf/roles/role_kf"
+    ).mock(return_value=httpx.Response(204))
+    # Kick returns 403 — should be caught and logged
+    respx.delete(
+        "https://discord.com/api/v10/guilds/g_kf/members/d_kf"
+    ).mock(return_value=httpx.Response(403, json={"message": "Missing Permissions"}))
+
+    payload = {
+        "event_type": "subscription.updated",
+        "subscription_id": "sub_kf",
+        "status": "canceled",
+    }
+    resp = await async_client.post("/api/v1/webhooks/external-payment", json=payload)
+    assert resp.status_code == 200
+
+
+# ── Admin: sync_user edge cases ───────────────────────────────────────────────
+
+
+@pytest.mark.asyncio
+@respx.mock
+async def test_admin_sync_user_tier_not_found(async_client, mock_db, admin_headers):
+    """sync_user skips subscriptions whose tier document no longer exists."""
+    user = User(
+        email="tiergone@example.com",
+        hashed_password=hash_password("pw"),
+        discord_id="d_tg",
+    )
+    await user.insert()
+
+    sub = Subscription(
+        user_id=str(user.id),
+        tier_id="000000000000000000000001",  # non-existent tier
+        external_subscription_id="sub_tiergone",
+        status=SubscriptionStatus.ACTIVE,
+        current_period_end=datetime.now(timezone.utc) + timedelta(days=30),
+    )
+    await sub.insert()
+
+    resp = await async_client.post(
+        f"/api/v1/admin/sync-user/{user.id}", headers=admin_headers
+    )
+    assert resp.status_code == 200
+    assert resp.json()["data"]["roles_synced"] == []
+
+
+@pytest.mark.asyncio
+@respx.mock
+async def test_admin_sync_user_server_not_found(async_client, mock_db, admin_headers):
+    """sync_user skips subscriptions whose server document no longer exists."""
+    user = User(
+        email="servergone@example.com",
+        hashed_password=hash_password("pw"),
+        discord_id="d_sg",
+    )
+    await user.insert()
+
+    tier = SubscriptionTier(
+        server_id="000000000000000000000001",  # non-existent server
+        tier_name="T",
+        price_id="p",
+        discord_role_ids=["r1"],
+    )
+    await tier.insert()
+
+    sub = Subscription(
+        user_id=str(user.id),
+        tier_id=str(tier.id),
+        external_subscription_id="sub_servergone",
+        status=SubscriptionStatus.ACTIVE,
+        current_period_end=datetime.now(timezone.utc) + timedelta(days=30),
+    )
+    await sub.insert()
+
+    resp = await async_client.post(
+        f"/api/v1/admin/sync-user/{user.id}", headers=admin_headers
+    )
+    assert resp.status_code == 200
+    assert resp.json()["data"]["roles_synced"] == []
+
+
+@pytest.mark.asyncio
+@respx.mock
+async def test_admin_sync_user_role_failure_is_logged(async_client, mock_db, admin_headers):
+    """sync_user logs role-assignment failures and continues without raising."""
+    user = User(
+        email="syncrole_fail@example.com",
+        hashed_password=hash_password("pw"),
+        discord_id="d_srf",
+    )
+    await user.insert()
+    server = DiscordServer(guild_id="g_srf", guild_name="G", owner_id=str(user.id))
+    await server.insert()
+    tier = SubscriptionTier(
+        server_id=str(server.id),
+        tier_name="T",
+        price_id="p",
+        discord_role_ids=["role_srf"],
+    )
+    await tier.insert()
+    sub = Subscription(
+        user_id=str(user.id),
+        tier_id=str(tier.id),
+        external_subscription_id="sub_srf",
+        status=SubscriptionStatus.ACTIVE,
+        current_period_end=datetime.now(timezone.utc) + timedelta(days=30),
+    )
+    await sub.insert()
+
+    # Discord returns 403 for the role assignment
+    respx.put(
+        "https://discord.com/api/v10/guilds/g_srf/members/d_srf/roles/role_srf"
+    ).mock(return_value=httpx.Response(403, json={"message": "Missing Permissions"}))
+
+    resp = await async_client.post(
+        f"/api/v1/admin/sync-user/{user.id}", headers=admin_headers
+    )
+    assert resp.status_code == 200
+    # Role was NOT successfully synced
+    assert resp.json()["data"]["roles_synced"] == []

@@ -1,5 +1,7 @@
 """Tests for authentication and authorization."""
 
+from datetime import timedelta
+
 import pytest
 
 from app.core.security import create_access_token, decode_access_token
@@ -28,6 +30,15 @@ def test_decode_invalid_token():
     invalid_token = "invalid.token.here"
     decoded = decode_access_token(invalid_token)
     assert decoded is None
+
+
+def test_create_access_token_with_expires_delta():
+    """create_access_token respects an explicit expires_delta."""
+    data = {"sub": "test_user"}
+    token = create_access_token(data, expires_delta=timedelta(hours=1))
+    decoded = decode_access_token(token)
+    assert decoded is not None
+    assert decoded["sub"] == "test_user"
 
 
 @pytest.mark.asyncio
